@@ -3,108 +3,243 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>摄影作品水印添加工具</title>
-    <link rel="stylesheet" href="styles.css">
+    <title>Watermark Studio</title>
+    <link rel="stylesheet" href="styles.css?v=5.0">
 </head>
 <body>
-    <h1>摄影作品水印添加工具</h1>
-    
-    <div class="container">
-        <div class="upload-section">
-            <h2>上传文件</h2>
-            
-            <div id="photoUpload" class="upload-box">
-                <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                    <circle cx="8.5" cy="8.5" r="1.5"/>
-                    <polyline points="21 15 16 10 5 21"/>
-                </svg>
-                <h3>上传摄影作品</h3>
-                <p>点击或拖放图片文件到这里</p>
-                <input type="file" id="photoInput" accept="image/*" multiple style="display: none;">
+    <div class="app-shell">
+        <header class="app-header">
+            <div class="brand-block">
+                <p class="eyebrow">Watermark Studio</p>
+                <h1>摄影作品水印工作台</h1>
+                <p class="brand-summary">批量添加、实时预览、统一导出。</p>
             </div>
-            
-            <div id="watermarkUpload" class="upload-box">
-                <svg xmlns="http://www.w3.org/2000/svg" width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z"/>
-                    <line x1="16" y1="8" x2="2" y2="22"/>
-                    <line x1="17.5" y1="15" x2="9" y2="15"/>
-                </svg>
-                <h3>上传水印图片</h3>
-                <p>请上传PNG格式的水印图片</p>
-                <input type="file" id="watermarkInput" accept="image/png" style="display: none;">
+
+            <div class="header-metrics" aria-label="当前状态">
+                <div class="metric">
+                    <span id="photoCount" class="metric-value">0</span>
+                    <span class="metric-label">作品</span>
+                </div>
+                <div class="metric">
+                    <span id="processedCount" class="metric-value">0</span>
+                    <span class="metric-label">成品</span>
+                </div>
             </div>
-            
-            <div id="watermarkPreviewContainer" style="text-align: center; margin-top: 15px; display: none;">
-                <h3>水印预览</h3>
-                <img id="watermarkPreview" class="watermark-preview" src="" alt="水印预览">
-                <p id="watermarkInfo" class="file-info"></p>
-            </div>
-            
-            <div class="watermark-settings">
-                <h3>水印设置</h3>
-                
-                <div class="setting-group">
-                    <label for="opacityRange">透明度</label>
-                    <input type="range" id="opacityRange" min="10" max="100" value="70" step="5">
-                    <div class="range-value"><span id="opacityValue">70%</span></div>
+        </header>
+
+        <main class="workspace">
+            <aside class="control-panel">
+                <section class="panel">
+                    <div class="section-head">
+                        <h2>素材</h2>
+                        <p>作品与 PNG 水印</p>
+                    </div>
+
+                    <div class="upload-stack">
+                        <div id="photoUpload" class="upload-box" role="button" tabindex="0" aria-label="上传摄影作品">
+                            <div class="upload-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5z"/>
+                                    <path d="M8 11h.01"/>
+                                    <path d="m20 15-4.5-4.5L7 19"/>
+                                </svg>
+                            </div>
+                            <div class="upload-copy">
+                                <h3>摄影作品</h3>
+                                <p>JPG / PNG</p>
+                            </div>
+                            <span id="photoUploadState" class="upload-tag">未选择</span>
+                            <input type="file" id="photoInput" accept="image/*" multiple hidden>
+                        </div>
+
+                        <div id="watermarkUpload" class="upload-box" role="button" tabindex="0" aria-label="上传水印图片">
+                            <div class="upload-icon upload-icon--accent" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 3v18"/>
+                                    <path d="M8 7h7a3 3 0 1 1 0 6H9a3 3 0 1 0 0 6h8"/>
+                                </svg>
+                            </div>
+                            <div class="upload-copy">
+                                <h3>PNG 水印</h3>
+                                <p>透明背景</p>
+                            </div>
+                            <span id="watermarkUploadState" class="upload-tag">未选择</span>
+                            <input type="file" id="watermarkInput" accept="image/png" hidden>
+                        </div>
+                    </div>
+
+                    <div id="watermarkPreviewContainer" class="watermark-preview-panel" style="display: none;">
+                        <div class="watermark-preview-card">
+                            <div class="watermark-preview-frame">
+                                <img id="watermarkPreview" class="watermark-preview" src="" alt="水印预览">
+                            </div>
+                            <div class="watermark-preview-copy">
+                                <span class="watermark-preview-label">水印预览</span>
+                                <p id="watermarkInfo" class="file-info"></p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <div class="section-head">
+                        <h2>设置</h2>
+                        <p>透明度、尺寸、位置</p>
+                    </div>
+
+                    <div class="watermark-settings">
+                        <div class="setting-group">
+                            <div class="setting-row">
+                                <label for="opacityRange">透明度</label>
+                                <span id="opacityValue" class="range-value">70%</span>
+                            </div>
+                            <input type="range" id="opacityRange" min="10" max="100" value="70" step="5">
+                        </div>
+
+                        <div class="setting-group">
+                            <div class="setting-row">
+                                <label for="sizeRange">大小</label>
+                                <span id="sizeValue" class="range-value">25%</span>
+                            </div>
+                            <input type="range" id="sizeRange" min="10" max="50" value="25" step="5">
+                        </div>
+
+                        <div class="setting-group">
+                            <div class="setting-row">
+                                <label for="marginRange">底部边距</label>
+                                <span id="marginValue" class="range-value">20px</span>
+                            </div>
+                            <input type="range" id="marginRange" min="0" max="50" value="20" step="5">
+                        </div>
+
+                        <div class="setting-group color-mode-group">
+                            <div class="setting-row">
+                                <label>颜色模式</label>
+                            </div>
+                            <div class="segmented-control" role="radiogroup" aria-label="水印颜色模式">
+                                <label class="segment-option">
+                                    <input type="radio" name="watermarkMode" value="original" checked>
+                                    <span>原色</span>
+                                </label>
+                                <label class="segment-option">
+                                    <input type="radio" name="watermarkMode" value="auto">
+                                    <span>自动</span>
+                                </label>
+                                <label class="segment-option">
+                                    <input type="radio" name="watermarkMode" value="manual">
+                                    <span>手动</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="setting-group setting-group--switch" id="backgroundRemovalGroup">
+                            <div class="switch-copy">
+                                <span class="switch-label">去除浅色背景</span>
+                                <p>保留彩色线条</p>
+                            </div>
+
+                            <label class="switch" for="removeLightBackgroundSwitch">
+                                <input type="checkbox" id="removeLightBackgroundSwitch" checked>
+                                <span class="switch-track" aria-hidden="true"></span>
+                                <span class="switch-text">开启</span>
+                            </label>
+                        </div>
+
+                        <div class="setting-group manual-color-group" id="manualColorGroup" style="display: none;">
+                            <div class="setting-row">
+                                <label for="watermarkColor">手动颜色</label>
+                            </div>
+                            <div class="color-palette">
+                                <button type="button" class="color-btn" data-color="#000000" aria-label="黑色"></button>
+                                <button type="button" class="color-btn color-btn--light" data-color="#FFFFFF" aria-label="白色"></button>
+                                <input type="color" id="watermarkColor" value="#000000" aria-label="自定义水印颜色">
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="panel panel--actions">
+                    <div class="section-head">
+                        <h2>导出</h2>
+                        <p>生成与下载</p>
+                    </div>
+
+                    <div class="button-stack">
+                        <button id="applyWatermarkBtn" class="btn btn-primary" disabled>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M12 3v12"/>
+                                <path d="m7 10 5 5 5-5"/>
+                                <path d="M5 21h14"/>
+                            </svg>
+                            <span>生成全部成品</span>
+                        </button>
+
+                        <button id="downloadAllBtn" class="btn btn-secondary" disabled>
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <path d="m7 10 5 5 5-5"/>
+                                <path d="M12 15V3"/>
+                            </svg>
+                            <span>下载原图尺寸</span>
+                        </button>
+                    </div>
+
+                    <div class="status-strip">
+                        <span id="appStatusText">等待上传素材</span>
+                    </div>
+                </section>
+            </aside>
+
+            <section class="stage-panel">
+                <div class="stage-toolbar">
+                    <div class="stage-copy">
+                        <h2>实时预览</h2>
+                        <p id="previewMeta">当前还没有可预览的作品</p>
+                    </div>
+                    <span id="previewBadge" class="stage-badge">未选择图片</span>
                 </div>
-                
-                <div class="setting-group">
-                    <label for="sizeRange">大小</label>
-                    <input type="range" id="sizeRange" min="10" max="50" value="25" step="5">
-                    <div class="range-value"><span id="sizeValue">25%</span></div>
-                </div>
-                
-                <div class="setting-group">
-                    <label for="marginRange">底部边距</label>
-                    <input type="range" id="marginRange" min="0" max="50" value="20" step="5">
-                    <div class="range-value"><span id="marginValue">20px</span></div>
-                </div>
-                
-                <div class="setting-group">
-                    <input type="checkbox" id="autoColorSwitch" checked>
-                    <label for="autoColorSwitch">根据背景自动切换水印颜色</label>
-                </div>
-                
-                <div class="setting-group" id="manualColorGroup" style="display: none;">
-                    <label for="watermarkColor">水印颜色</label>
-                    <div style="display: flex; gap: 10px; margin-top: 5px;">
-                        <button type="button" class="color-btn" data-color="#000000" style="background-color: #000000; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; border: 2px solid #ccc;"></button>
-                        <button type="button" class="color-btn" data-color="#FFFFFF" style="background-color: #FFFFFF; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; border: 2px solid #ccc;"></button>
-                        <input type="color" id="watermarkColor" value="#000000" style="margin-left: 10px;">
+
+                <div class="preview-stage">
+                    <div id="noImagesMessage" class="empty-state">
+                        <div class="empty-state-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                                <circle cx="8.5" cy="9.5" r="1.5"></circle>
+                                <path d="m21 15-4.5-4.5L7 20"></path>
+                            </svg>
+                        </div>
+                        <h3>等待图片</h3>
+                        <p>这里会显示当前作品的最终效果。</p>
+                    </div>
+
+                    <div id="previewContainer" class="preview-container">
+                        <img id="previewImage" src="" alt="预览图片">
+                    </div>
+
+                    <div id="loading" class="loading">
+                        <div class="loading-panel">
+                            <div class="loading-spinner"></div>
+                            <p>正在处理图片...</p>
+                        </div>
                     </div>
                 </div>
-            </div>
-            
-            <button id="applyWatermarkBtn" class="btn" disabled>应用水印到所有图片</button>
-            <button id="downloadAllBtn" class="btn download-all-btn" disabled>下载所有处理后的图片</button>
-        </div>
-        
-        <div class="preview-section">
-            <h2>预览</h2>
-            
-            <div id="noImagesMessage" class="no-images-message">
-                <p>请上传摄影作品和水印图片以预览效果</p>
-            </div>
-            
-            <div id="previewContainer" class="preview-container">
-                <img id="previewImage" src="" alt="预览图片">
-            </div>
-            
-            <div id="thumbnailContainer" class="thumbnail-container"></div>
-            
-            <div id="loading" class="loading">
-                <div class="loading-spinner"></div>
-                <p>正在处理图片...</p>
-            </div>
-        </div>
+
+                <div class="filmstrip">
+                    <div class="filmstrip-head">
+                        <h3>图片队列</h3>
+                        <span id="thumbnailSummary" class="filmstrip-summary">暂无图片</span>
+                    </div>
+                    <div id="thumbnailContainer" class="thumbnail-container"></div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="app-footer">
+            <span>本地处理</span>
+            <span>适合摄影作品批量加水印</span>
+        </footer>
     </div>
 
-    <footer>
-        &copy; 2025 元素周期表. All rights reserved.
-    </footer>
-
-    <script src="script.js?v=1.0"></script>
+    <script src="script.js?v=5.0"></script>
 </body>
 </html>

@@ -1,977 +1,859 @@
-// 动态背景图片功能（已禁用自动刷新）
-function updateBackgroundImage() {
-    const timestamp = new Date().getTime();
-    const backgroundUrl = `https://img.mod.wiki/acg/?t=${timestamp}`;
-    document.body.style.background = `linear-gradient(rgba(0, 0, 0, 0.3), rgba(0, 0, 0, 0.3)), url('${backgroundUrl}') center/cover no-repeat fixed`;
-    document.body.style.backgroundSize = 'cover';
-    document.body.style.backgroundAttachment = 'fixed';
-}
+(() => {
+    const PREVIEW_MAX_DIMENSION = 2048;
+    const PREVIEW_SIZE_THRESHOLD = 5 * 1024 * 1024;
+    const PREVIEW_JPEG_QUALITY = 0.82;
+    const OUTPUT_JPEG_QUALITY = 0.92;
+    const PROCESS_BATCH_SIZE = 2;
 
-// 页面加载时更新一次背景（移除了自动刷新）
-window.addEventListener('load', updateBackgroundImage);
-
-// 全局变量
-const photoInput = document.getElementById('photoInput');
-const photoUpload = document.getElementById('photoUpload');
-const watermarkInput = document.getElementById('watermarkInput');
-const watermarkUpload = document.getElementById('watermarkUpload');
-const watermarkPreview = document.getElementById('watermarkPreview');
-const watermarkPreviewContainer = document.getElementById('watermarkPreviewContainer');
-const watermarkInfo = document.getElementById('watermarkInfo');
-const previewImage = document.getElementById('previewImage');
-const previewContainer = document.getElementById('previewContainer');
-const thumbnailContainer = document.getElementById('thumbnailContainer');
-const noImagesMessage = document.getElementById('noImagesMessage');
-const applyWatermarkBtn = document.getElementById('applyWatermarkBtn');
-const downloadAllBtn = document.getElementById('downloadAllBtn');
-const loading = document.getElementById('loading');
-const autoColorSwitch = document.getElementById('autoColorSwitch');
-const manualColorGroup = document.getElementById('manualColorGroup');
-const watermarkColor = document.getElementById('watermarkColor');
-const colorButtons = document.querySelectorAll('.color-btn');
-
-// 设置滑块
-const opacityRange = document.getElementById('opacityRange');
-const opacityValue = document.getElementById('opacityValue');
-const sizeRange = document.getElementById('sizeRange');
-const sizeValue = document.getElementById('sizeValue');
-const marginRange = document.getElementById('marginRange');
-const marginValue = document.getElementById('marginValue');
-
-// 存储上传的图片和处理后的图片
-let uploadedPhotos = [];
-let watermarkImage = null;
-let processedImages = [];
-let currentPhotoIndex = 0;
-
-// 性能优化相关
-let isProcessing = false;
-let processingProgress = 0;
-
-// 初始化拖放功能
-function initDragAndDrop() {
-    // 照片上传区域
-    photoUpload.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        photoUpload.classList.add('highlight');
-    });
-    
-    photoUpload.addEventListener('dragleave', () => {
-        photoUpload.classList.remove('highlight');
-    });
-    
-    photoUpload.addEventListener('drop', (e) => {
-        e.preventDefault();
-        photoUpload.classList.remove('highlight');
-        if (e.dataTransfer.files.length > 0) {
-            handlePhotoFiles(e.dataTransfer.files);
-        }
-    });
-    
-    // 水印上传区域
-    watermarkUpload.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        watermarkUpload.classList.add('highlight');
-    });
-    
-    watermarkUpload.addEventListener('dragleave', () => {
-        watermarkUpload.classList.remove('highlight');
-    });
-    
-    watermarkUpload.addEventListener('drop', (e) => {
-        e.preventDefault();
-        watermarkUpload.classList.remove('highlight');
-        if (e.dataTransfer.files.length > 0 && e.dataTransfer.files[0].type === 'image/png') {
-            handleWatermarkFile(e.dataTransfer.files[0]);
-        } else {
-            alert('请上传PNG格式的水印图片');
-        }
-    });
-}
-
-// 初始化事件监听
-function initEventListeners() {
-    // 照片上传点击事件
-    photoUpload.addEventListener('click', () => {
-        photoInput.click();
-    });
-    
-    photoInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            handlePhotoFiles(e.target.files);
-        }
-    });
-    
-    // 水印上传点击事件
-    watermarkUpload.addEventListener('click', () => {
-        watermarkInput.click();
-    });
-    
-    watermarkInput.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            if (e.target.files[0].type === 'image/png') {
-                handleWatermarkFile(e.target.files[0]);
-            } else {
-                alert('请上传PNG格式的水印图片');
-            }
-        }
-    });
-    
-    // 应用水印按钮
-    applyWatermarkBtn.addEventListener('click', applyWatermarkToAllPhotos);
-    
-    // 下载所有按钮
-    downloadAllBtn.addEventListener('click', downloadAllProcessedImages);
-    
-    // 滑块事件
-    opacityRange.addEventListener('input', updateOpacityValue);
-    sizeRange.addEventListener('input', updateSizeValue);
-    marginRange.addEventListener('input', updateMarginValue);
-    
-    // 滑块变化时重新应用水印
-    opacityRange.addEventListener('change', () => {
-        if (uploadedPhotos.length > 0 && watermarkImage) {
-            applyWatermarkToCurrentPhoto();
-        }
-    });
-    
-    sizeRange.addEventListener('change', () => {
-        if (uploadedPhotos.length > 0 && watermarkImage) {
-            applyWatermarkToCurrentPhoto();
-        }
-    });
-    
-    marginRange.addEventListener('change', () => {
-        if (uploadedPhotos.length > 0 && watermarkImage) {
-            applyWatermarkToCurrentPhoto();
-        }
-    });
-    
-    // 自动颜色切换复选框事件
-    autoColorSwitch.addEventListener('change', () => {
-        // 显示或隐藏手动颜色选择区域
-        manualColorGroup.style.display = autoColorSwitch.checked ? 'none' : 'block';
-        
-        // 如果有照片和水印，重新应用水印
-        if (uploadedPhotos.length > 0 && watermarkImage) {
-            applyWatermarkToCurrentPhoto();
-        }
-    });
-    
-    // 颜色选择器事件
-    watermarkColor.addEventListener('change', () => {
-        if (uploadedPhotos.length > 0 && watermarkImage) {
-            applyWatermarkToCurrentPhoto();
-        }
-    });
-    
-    // 颜色按钮点击事件
-    colorButtons.forEach(button => {
-        button.addEventListener('click', () => {
-            // 更新颜色选择器的值
-            watermarkColor.value = button.dataset.color;
-            
-            // 更新按钮样式
-            colorButtons.forEach(btn => {
-                btn.style.border = '2px solid #ccc';
-            });
-            button.style.border = '2px solid #3498db';
-            
-            // 如果有照片和水印，重新应用水印
-            if (uploadedPhotos.length > 0 && watermarkImage) {
-                applyWatermarkToCurrentPhoto();
-            }
-        });
-    });
-}
-
-// 处理上传的照片文件（优化版本）
-function handlePhotoFiles(files) {
-    uploadedPhotos = [];
-    thumbnailContainer.innerHTML = '';
-    processedImages = [];
-    
-    const fileArray = Array.from(files);
-    
-    // 限制同时处理的文件数量，避免内存溢出
-    const batchSize = 5;
-    let currentIndex = 0;
-    
-    function processBatch() {
-        const batch = fileArray.slice(currentIndex, currentIndex + batchSize);
-        
-        batch.forEach((file, index) => {
-            if (file.type.startsWith('image/')) {
-                // 检查文件大小，大文件进行压缩
-                if (file.size > 5 * 1024 * 1024) { // 5MB以上的文件
-                    compressImage(file, (compressedDataURL) => {
-                        processImageFile(compressedDataURL, file.name, currentIndex + index);
-                    });
-                } else {
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        processImageFile(e.target.result, file.name, currentIndex + index);
-                    };
-                    reader.readAsDataURL(file);
-                }
-            }
-        });
-        
-        currentIndex += batchSize;
-        
-        if (currentIndex < fileArray.length) {
-            // 使用requestAnimationFrame避免阻塞UI
-            requestAnimationFrame(() => {
-                setTimeout(processBatch, 50); // 小延迟避免卡顿
-            });
-        }
-    }
-    
-    processBatch();
-    
-    // 隐藏无图片消息
-    noImagesMessage.style.display = 'none';
-}
-
-// 压缩大图片（优化版本）
-function compressImage(file, callback) {
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const img = new Image();
-        img.onload = function() {
-            // 复用canvas或创建新的
-            let canvas = document.getElementById('compress-canvas');
-            if (!canvas) {
-                canvas = document.createElement('canvas');
-                canvas.id = 'compress-canvas';
-                canvas.style.display = 'none';
-                document.body.appendChild(canvas);
-            }
-            const ctx = canvas.getContext('2d');
-            
-            // 如果图片过大，进行缩放
-            let { width, height } = img;
-            const maxDimension = 2048; // 最大尺寸
-            
-            if (width > maxDimension || height > maxDimension) {
-                if (width > height) {
-                    height = (height * maxDimension) / width;
-                    width = maxDimension;
-                } else {
-                    width = (width * maxDimension) / height;
-                    height = maxDimension;
-                }
-            }
-            
-            canvas.width = width;
-            canvas.height = height;
-            
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(img, 0, 0, width, height);
-            
-            const compressedDataURL = canvas.toDataURL('image/jpeg', 0.8);
-            
-            // 清理canvas内容以释放内存
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // 清理图片引用
-            img.onload = null;
-            img.src = '';
-            
-            callback(compressedDataURL);
-        };
-        img.src = e.target.result;
+    const elements = {
+        photoInput: document.getElementById("photoInput"),
+        photoUpload: document.getElementById("photoUpload"),
+        photoUploadState: document.getElementById("photoUploadState"),
+        photoCount: document.getElementById("photoCount"),
+        watermarkInput: document.getElementById("watermarkInput"),
+        watermarkUpload: document.getElementById("watermarkUpload"),
+        watermarkUploadState: document.getElementById("watermarkUploadState"),
+        watermarkPreview: document.getElementById("watermarkPreview"),
+        watermarkPreviewContainer: document.getElementById("watermarkPreviewContainer"),
+        watermarkInfo: document.getElementById("watermarkInfo"),
+        previewImage: document.getElementById("previewImage"),
+        previewMeta: document.getElementById("previewMeta"),
+        previewBadge: document.getElementById("previewBadge"),
+        thumbnailContainer: document.getElementById("thumbnailContainer"),
+        thumbnailSummary: document.getElementById("thumbnailSummary"),
+        noImagesMessage: document.getElementById("noImagesMessage"),
+        applyWatermarkBtn: document.getElementById("applyWatermarkBtn"),
+        downloadAllBtn: document.getElementById("downloadAllBtn"),
+        processedCount: document.getElementById("processedCount"),
+        appStatusText: document.getElementById("appStatusText"),
+        loading: document.getElementById("loading"),
+        loadingText: document.querySelector("#loading p"),
+        watermarkModeInputs: Array.from(document.querySelectorAll('input[name="watermarkMode"]')),
+        backgroundRemovalGroup: document.getElementById("backgroundRemovalGroup"),
+        removeLightBackgroundSwitch: document.getElementById("removeLightBackgroundSwitch"),
+        manualColorGroup: document.getElementById("manualColorGroup"),
+        watermarkColor: document.getElementById("watermarkColor"),
+        colorButtons: Array.from(document.querySelectorAll(".color-btn")),
+        opacityRange: document.getElementById("opacityRange"),
+        opacityValue: document.getElementById("opacityValue"),
+        sizeRange: document.getElementById("sizeRange"),
+        sizeValue: document.getElementById("sizeValue"),
+        marginRange: document.getElementById("marginRange"),
+        marginValue: document.getElementById("marginValue")
     };
-    reader.readAsDataURL(file);
-}
 
-// 处理单个图片文件
-function processImageFile(src, name, index) {
-    uploadedPhotos.push({
-        name: name,
-        src: src
-    });
-    
-    // 创建缩略图
-    createThumbnail(src, uploadedPhotos.length - 1);
-    
-    // 如果是第一张图片，显示预览
-    if (uploadedPhotos.length === 1) {
-        showPhotoPreview(0);
-    }
-    
-    // 如果水印已上传，启用应用水印按钮
-    updateButtonState();
-}
-
-// 处理上传的水印文件
-function handleWatermarkFile(file) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        watermarkImage = new Image();
-        watermarkImage.onload = () => {
-            // 显示水印预览
-            watermarkPreview.src = e.target.result;
-            watermarkPreview.style.display = 'block';
-            watermarkPreviewContainer.style.display = 'block';
-            watermarkInfo.textContent = `${file.name} (${watermarkImage.width}×${watermarkImage.height}px)`;
-            
-            // 如果有照片，应用水印到当前照片
-            if (uploadedPhotos.length > 0) {
-                applyWatermarkToCurrentPhoto();
-            }
-            
-            // 更新按钮状态
-            updateButtonState();
-        };
-        watermarkImage.src = e.target.result;
+    const state = {
+        photos: [],
+        processedDownloads: [],
+        currentIndex: 0,
+        watermark: null,
+        isProcessing: false,
+        previewRenderId: 0
     };
-    reader.readAsDataURL(file);
-}
 
-// 创建缩略图（优化版本）
-function createThumbnail(src, index) {
-    const img = document.createElement('img');
-    
-    // 复用canvas或创建新的
-    let canvas = document.getElementById('thumbnail-canvas');
-    if (!canvas) {
-        canvas = document.createElement('canvas');
-        canvas.id = 'thumbnail-canvas';
-        canvas.style.display = 'none';
-        document.body.appendChild(canvas);
+    function nextFrame() {
+        return new Promise(resolve => requestAnimationFrame(resolve));
     }
-    const ctx = canvas.getContext('2d');
-    const tempImg = new Image();
-    
-    tempImg.onload = () => {
-        // 设置更小的缩略图大小以提高性能
-        const maxSize = 100;
-        let width = tempImg.width;
-        let height = tempImg.height;
-        
-        if (width > height) {
-            if (width > maxSize) {
-                height = (height * maxSize) / width;
-                width = maxSize;
-            }
-        } else {
-            if (height > maxSize) {
-                width = (width * maxSize) / height;
-                height = maxSize;
-            }
+
+    function loadImage(src) {
+        return new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = () => reject(new Error(`Failed to load image: ${src}`));
+            image.src = src;
+        });
+    }
+
+    function readFileAsDataURL(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = event => resolve(event.target.result);
+            reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function scaleDimensions(width, height, maxDimension) {
+        if (width <= maxDimension && height <= maxDimension) {
+            return { width, height };
         }
-        
+
+        if (width >= height) {
+            return {
+                width: maxDimension,
+                height: Math.round((height * maxDimension) / width)
+            };
+        }
+
+        return {
+            width: Math.round((width * maxDimension) / height),
+            height: maxDimension
+        };
+    }
+
+    function createCanvas(width, height) {
+        const canvas = document.createElement("canvas");
         canvas.width = width;
         canvas.height = height;
-        
-        // 使用更高的压缩率
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'low';
-        ctx.drawImage(tempImg, 0, 0, width, height);
-        
-        const thumbnailData = canvas.toDataURL('image/jpeg', 0.6);
-        img.src = thumbnailData;
-        
-        // 清理canvas内容以释放内存
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        
-        // 清理图片引用
-        tempImg.onload = null;
-        tempImg.src = '';
-    };
-    
-    tempImg.src = src;
-    img.classList.add('thumbnail');
-    img.dataset.index = index;
-    
-    if (index === 0) {
-        img.classList.add('active');
+        return canvas;
     }
-    
-    img.addEventListener('click', () => {
-        // 移除所有活动状态
-        document.querySelectorAll('.thumbnail').forEach(thumb => {
-            thumb.classList.remove('active');
+
+    function canvasToDataURL(canvas, type, quality) {
+        return canvas.toDataURL(type, quality);
+    }
+
+    function canvasToBlob(canvas, type, quality) {
+        return new Promise(resolve => {
+            canvas.toBlob(blob => {
+                if (blob) {
+                    resolve(blob);
+                    return;
+                }
+
+                resolve(dataUrlToBlob(canvas.toDataURL(type, quality)));
+            }, type, quality);
         });
-        
-        // 添加活动状态到当前缩略图
-        img.classList.add('active');
-        
-        // 显示对应的照片
-        showPhotoPreview(index);
-    });
-    
-    thumbnailContainer.appendChild(img);
-}
+    }
 
-// 显示照片预览
-function showPhotoPreview(index) {
-    currentPhotoIndex = index;
-    const photo = uploadedPhotos[index];
-    
-    // 如果已经处理过这张照片，显示处理后的图片
-    if (processedImages[index]) {
-        previewImage.src = processedImages[index];
-    } else {
-        previewImage.src = photo.src;
-    }
-    
-    previewImage.style.display = 'block';
-    
-    // 如果水印已上传，应用水印
-    if (watermarkImage) {
-        applyWatermarkToCurrentPhoto();
-    }
-}
+    function dataUrlToBlob(dataUrl) {
+        const [header, payload] = dataUrl.split(",");
+        const mimeMatch = header.match(/data:(.*?);base64/);
+        const mimeType = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+        const binary = atob(payload);
+        const bytes = new Uint8Array(binary.length);
 
-// 应用水印到当前照片（优化版本）
-function applyWatermarkToCurrentPhoto() {
-    if (!uploadedPhotos[currentPhotoIndex] || !watermarkImage) return;
-    
-    const photo = uploadedPhotos[currentPhotoIndex];
-    
-    // 复用canvas或创建新的
-    let canvas = document.getElementById('temp-canvas');
-    if (!canvas) {
-        canvas = document.createElement('canvas');
-        canvas.id = 'temp-canvas';
-        canvas.style.display = 'none';
-        document.body.appendChild(canvas);
-    }
-    const ctx = canvas.getContext('2d');
-    
-    // 创建图像对象
-    const img = new Image();
-    img.onload = () => {
-        // 设置画布大小为图片大小
-        canvas.width = img.width;
-        canvas.height = img.height;
-        
-        // 绘制原始图片
-        ctx.drawImage(img, 0, 0);
-        
-        // 获取设置值
-        const opacity = parseInt(opacityRange.value) / 100;
-        const size = parseInt(sizeRange.value) / 100;
-        const margin = parseInt(marginRange.value);
-        
-        // 计算水印大小
-        const watermarkWidth = img.width * size;
-        const watermarkHeight = (watermarkImage.height / watermarkImage.width) * watermarkWidth;
-        
-        // 计算水印位置（底部居中）
-        const watermarkX = (img.width - watermarkWidth) / 2;
-        const watermarkY = img.height - watermarkHeight - margin;
-        
-        // 复用临时canvas
-        let tempCanvas = document.getElementById('temp-watermark-canvas');
-        if (!tempCanvas) {
-            tempCanvas = document.createElement('canvas');
-            tempCanvas.id = 'temp-watermark-canvas';
-            tempCanvas.style.display = 'none';
-            document.body.appendChild(tempCanvas);
+        for (let index = 0; index < binary.length; index += 1) {
+            bytes[index] = binary.charCodeAt(index);
         }
-        tempCanvas.width = watermarkImage.width;
-        tempCanvas.height = watermarkImage.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        
-        // 清除之前的内容
-        tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-        
-        // 绘制原始水印
-        tempCtx.drawImage(watermarkImage, 0, 0);
-        
-        // 应用颜色滤镜
-        tempCtx.globalCompositeOperation = 'source-in';
-        
-        // 如果启用了自动颜色切换，分析背景颜色并设置水印颜色
-        if (autoColorSwitch.checked) {
-            // 分析水印区域的背景亮度
-            const color = analyzeImageBrightness(ctx, watermarkX, watermarkY, watermarkWidth, watermarkHeight);
-            tempCtx.fillStyle = color;
-        } else {
-            // 使用手动选择的颜色
-            tempCtx.fillStyle = watermarkColor.value;
-        }
-        
-        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-        
-        // 设置透明度
-        ctx.globalAlpha = opacity;
-        
-        // 绘制彩色水印
-        ctx.drawImage(tempCanvas, watermarkX, watermarkY, watermarkWidth, watermarkHeight);
-        
-        // 重置透明度和混合模式
-        ctx.globalAlpha = 1.0;
-        tempCtx.globalCompositeOperation = 'source-over';
-        
-        // 更新预览图片，使用压缩
-        const dataURL = canvas.toDataURL('image/jpeg', 0.85);
-        previewImage.src = dataURL;
-        
-        // 存储处理后的图片
-        processedImages[currentPhotoIndex] = dataURL;
-    };
-    img.src = photo.src;
-}
 
-// 应用水印到所有照片
-function applyWatermarkToAllPhotos() {
-    if (uploadedPhotos.length === 0 || !watermarkImage) return;
-    
-    // 显示加载动画
-    loading.style.display = 'block';
-    downloadAllBtn.disabled = true;
-    
-    // 使用setTimeout来避免UI阻塞
-    setTimeout(() => {
-        processAllPhotos().then(() => {
-            // 隐藏加载动画
-            loading.style.display = 'none';
-            downloadAllBtn.disabled = false;
-            
-            // 更新当前预览
-            showPhotoPreview(currentPhotoIndex);
-            
-            // 处理完成，不再显示确认对话框
-            console.log('所有图片处理完成！');
+        return new Blob([bytes], { type: mimeType });
+    }
+
+    function clampRectangle(x, y, width, height, maxWidth, maxHeight) {
+        const clampedX = Math.max(0, Math.min(Math.round(x), maxWidth));
+        const clampedY = Math.max(0, Math.min(Math.round(y), maxHeight));
+        const clampedWidth = Math.max(1, Math.min(Math.round(width), maxWidth - clampedX));
+        const clampedHeight = Math.max(1, Math.min(Math.round(height), maxHeight - clampedY));
+
+        return {
+            x: clampedX,
+            y: clampedY,
+            width: clampedWidth,
+            height: clampedHeight
+        };
+    }
+
+    function getContrastColor(context, x, y, width, height) {
+        const bounds = clampRectangle(x, y, width, height, context.canvas.width, context.canvas.height);
+        const imageData = context.getImageData(bounds.x, bounds.y, bounds.width, bounds.height);
+        const pixels = imageData.data;
+
+        let brightnessSum = 0;
+        let pixelCount = 0;
+
+        for (let index = 0; index < pixels.length; index += 4) {
+            const brightness =
+                (0.299 * pixels[index]) +
+                (0.587 * pixels[index + 1]) +
+                (0.114 * pixels[index + 2]);
+
+            brightnessSum += brightness;
+            pixelCount += 1;
+        }
+
+        if (!pixelCount) {
+            return "#FFFFFF";
+        }
+
+        return brightnessSum / pixelCount > 128 ? "#000000" : "#FFFFFF";
+    }
+
+    function getSettings() {
+        return {
+            opacity: Number.parseInt(elements.opacityRange.value, 10) / 100,
+            size: Number.parseInt(elements.sizeRange.value, 10) / 100,
+            margin: Number.parseInt(elements.marginRange.value, 10)
+        };
+    }
+
+    function getWatermarkMode() {
+        const selectedMode = elements.watermarkModeInputs.find(input => input.checked);
+        return selectedMode ? selectedMode.value : "original";
+    }
+
+    function getOutputType(photo) {
+        return photo.mimeType === "image/png" ? "image/png" : "image/jpeg";
+    }
+
+    function buildDownloadName(originalName, type) {
+        const dotIndex = originalName.lastIndexOf(".");
+        const baseName = dotIndex === -1 ? originalName : originalName.slice(0, dotIndex);
+        const originalExtension = dotIndex === -1 ? "" : originalName.slice(dotIndex);
+
+        if (type === "image/png") {
+            return `${baseName}_watermarked.png`;
+        }
+
+        if (/\.jpe?g$/i.test(originalExtension)) {
+            return `${baseName}_watermarked${originalExtension}`;
+        }
+
+        return `${baseName}_watermarked.jpg`;
+    }
+
+    function formatDimensions(width, height) {
+        if (!width || !height) {
+            return "尺寸未知";
+        }
+
+        return `${width} × ${height}px`;
+    }
+
+    function formatCountLabel(count, singularLabel, pluralLabel = singularLabel) {
+        return `${count} ${count === 1 ? singularLabel : pluralLabel}`;
+    }
+
+    function updateSliderLabels() {
+        elements.opacityValue.textContent = `${elements.opacityRange.value}%`;
+        elements.sizeValue.textContent = `${elements.sizeRange.value}%`;
+        elements.marginValue.textContent = `${elements.marginRange.value}px`;
+    }
+
+    function syncColorModeControls() {
+        const mode = getWatermarkMode();
+        elements.manualColorGroup.style.display = mode === "manual" ? "grid" : "none";
+
+        if (elements.backgroundRemovalGroup) {
+            elements.backgroundRemovalGroup.style.display = mode === "original" ? "grid" : "none";
+        }
+    }
+
+    function updateActiveColorButton() {
+        elements.colorButtons.forEach(button => {
+            const isActive = button.dataset.color.toLowerCase() === elements.watermarkColor.value.toLowerCase();
+            button.classList.toggle("is-active", isActive);
+            button.setAttribute("aria-pressed", String(isActive));
         });
-    }, 100);
-}
+    }
 
-// 处理所有照片（优化版本）
-async function processAllPhotos() {
-    if (isProcessing) return;
-    isProcessing = true;
-    
-    try {
-        // 显示进度
-        showProcessingProgress();
-        
-        // 获取设置值
-        const opacity = parseInt(opacityRange.value) / 100;
-        const size = parseInt(sizeRange.value) / 100;
-        const margin = parseInt(marginRange.value);
-        
-        // 创建复用的canvas
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        
-        // 创建复用的临时canvas
-        const tempCanvas = document.createElement('canvas');
-        const tempCtx = tempCanvas.getContext('2d');
-        
-        // 批量处理，每次处理2张图片（减少内存压力）
-        const batchSize = 2;
-        
-        for (let batchStart = 0; batchStart < uploadedPhotos.length; batchStart += batchSize) {
-            const batchEnd = Math.min(batchStart + batchSize, uploadedPhotos.length);
-            
-            // 处理当前批次
-            for (let i = batchStart; i < batchEnd; i++) {
-                await new Promise(resolve => {
-                    const photo = uploadedPhotos[i];
-                    const img = new Image();
-                    
-                    img.onload = () => {
-                        try {
-                            // 设置画布大小
-                            canvas.width = img.width;
-                            canvas.height = img.height;
-                            
-                            // 绘制原始图片
-                            ctx.drawImage(img, 0, 0);
-                            
-                            // 计算水印大小
-                            const watermarkWidth = img.width * size;
-                            const watermarkHeight = (watermarkImage.height / watermarkImage.width) * watermarkWidth;
-                            
-                            // 计算水印位置（底部居中）
-                            const watermarkX = (img.width - watermarkWidth) / 2;
-                            const watermarkY = img.height - watermarkHeight - margin;
-                            
-                            // 复用临时画布
-                            tempCanvas.width = watermarkImage.width;
-                            tempCanvas.height = watermarkImage.height;
-                            
-                            // 清除之前的内容
-                            tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-                            
-                            // 绘制原始水印
-                            tempCtx.drawImage(watermarkImage, 0, 0);
-                            
-                            // 应用颜色滤镜
-                            tempCtx.globalCompositeOperation = 'source-in';
-                            
-                            // 如果启用了自动颜色切换，分析背景颜色并设置水印颜色
-                            if (autoColorSwitch.checked) {
-                                // 分析水印区域的背景亮度
-                                const color = analyzeImageBrightness(ctx, watermarkX, watermarkY, watermarkWidth, watermarkHeight);
-                                tempCtx.fillStyle = color;
-                            } else {
-                                // 使用手动选择的颜色
-                                tempCtx.fillStyle = watermarkColor.value;
-                            }
-                            
-                            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-                            
-                            // 设置透明度
-                            ctx.globalAlpha = opacity;
-                            
-                            // 绘制彩色水印
-                            ctx.drawImage(tempCanvas, watermarkX, watermarkY, watermarkWidth, watermarkHeight);
-                            
-                            // 重置透明度和混合模式
-                            ctx.globalAlpha = 1.0;
-                            tempCtx.globalCompositeOperation = 'source-over';
-                            
-                            // 存储处理后的图片，使用更高的压缩率
-                            const dataURL = canvas.toDataURL('image/jpeg', 0.85);
-                            processedImages[i] = dataURL;
-                            
-                            // 更新进度
-                            processingProgress = ((i + 1) / uploadedPhotos.length) * 100;
-                            updateProcessingProgress();
-                            
-                            // 清理图片引用
-                            img.onload = null;
-                            img.src = '';
-                            
-                            resolve();
-                        } catch (error) {
-                            console.error('处理图片时出错:', error);
-                            resolve();
-                        }
-                    };
-                    
-                    img.onerror = () => {
-                        console.error('加载图片失败:', photo.name);
-                        resolve();
-                    };
-                    
-                    img.src = photo.src;
-                });
+    function createWatermarkCanvas() {
+        const watermarkCanvas = createCanvas(state.watermark.width, state.watermark.height);
+        const watermarkContext = watermarkCanvas.getContext("2d");
+        watermarkContext.imageSmoothingEnabled = true;
+        watermarkContext.imageSmoothingQuality = "high";
+        watermarkContext.drawImage(state.watermark.image, 0, 0, watermarkCanvas.width, watermarkCanvas.height);
+        return { canvas: watermarkCanvas, context: watermarkContext };
+    }
+
+    function removeLightBackground(watermarkCanvas, watermarkContext) {
+        const imageData = watermarkContext.getImageData(0, 0, watermarkCanvas.width, watermarkCanvas.height);
+        const pixels = imageData.data;
+        const whiteThreshold = 242;
+        const softThreshold = 210;
+
+        for (let index = 0; index < pixels.length; index += 4) {
+            const red = pixels[index];
+            const green = pixels[index + 1];
+            const blue = pixels[index + 2];
+            const alpha = pixels[index + 3];
+            const minChannel = Math.min(red, green, blue);
+            const maxChannel = Math.max(red, green, blue);
+            const brightness = (red + green + blue) / 3;
+            const saturation = maxChannel - minChannel;
+
+            if (alpha === 0 || saturation > 32 || brightness < softThreshold) {
+                continue;
             }
-            
-            // 批次间添加小延迟，避免阻塞UI，并强制垃圾回收
-            if (batchEnd < uploadedPhotos.length) {
-                await new Promise(resolve => {
-                    requestAnimationFrame(() => {
-                        // 强制垃圾回收（如果浏览器支持）
-                        if (window.gc) {
-                            window.gc();
-                        }
-                        setTimeout(resolve, 50);
-                    });
-                });
+
+            if (brightness >= whiteThreshold) {
+                pixels[index + 3] = 0;
+                continue;
             }
+
+            const fade = (brightness - softThreshold) / (whiteThreshold - softThreshold);
+            pixels[index + 3] = Math.round(alpha * (1 - fade));
         }
-        
-        // 清理canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        tempCtx.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
-        
-    } catch (error) {
-        console.error('批量处理失败:', error);
-    } finally {
-        isProcessing = false;
-        hideProcessingProgress();
+
+        watermarkContext.putImageData(imageData, 0, 0);
+    }
+
+    function prepareWatermarkCanvas(baseContext, x, y, width, height) {
+        const mode = getWatermarkMode();
+        const { canvas, context } = createWatermarkCanvas();
+
+        if (mode === "original") {
+            if (elements.removeLightBackgroundSwitch && elements.removeLightBackgroundSwitch.checked) {
+                removeLightBackground(canvas, context);
+            }
+
+            return canvas;
+        }
+
+        context.globalCompositeOperation = "source-in";
+        context.fillStyle = mode === "auto"
+            ? getContrastColor(baseContext, x, y, width, height)
+            : elements.watermarkColor.value;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.globalCompositeOperation = "source-over";
+
+        return canvas;
+    }
+
+    function updateEmptyState() {
+        elements.noImagesMessage.style.display = state.photos.length ? "none" : "grid";
+    }
+
+    function updatePreviewMeta() {
+        const currentPhoto = state.photos[state.currentIndex];
+
+        if (!currentPhoto) {
+            elements.previewMeta.textContent = "当前还没有可预览的作品";
+            elements.previewBadge.textContent = "未选择图片";
+            return;
+        }
+
+        const originalSize = formatDimensions(currentPhoto.originalWidth, currentPhoto.originalHeight);
+        const previewSize = formatDimensions(currentPhoto.previewWidth, currentPhoto.previewHeight);
+        const sizeText = currentPhoto.isPreviewCompressed
+            ? `原图 ${originalSize} · 预览 ${previewSize}`
+            : `原图 ${originalSize}`;
+
+        elements.previewMeta.textContent = `${currentPhoto.name} · ${sizeText}`;
+        elements.previewBadge.textContent = `${state.currentIndex + 1} / ${state.photos.length}`;
+    }
+
+    function updateStatusText() {
+        const processedCount = state.processedDownloads.filter(Boolean).length;
+
+        if (state.isProcessing) {
+            elements.appStatusText.textContent = elements.loadingText.textContent;
+            return;
+        }
+
+        if (!state.photos.length && !state.watermark) {
+            elements.appStatusText.textContent = "等待上传作品与水印";
+            return;
+        }
+
+        if (state.photos.length && !state.watermark) {
+            elements.appStatusText.textContent = `已载入 ${formatCountLabel(state.photos.length, "张作品")}，等待水印`;
+            return;
+        }
+
+        if (!state.photos.length && state.watermark) {
+            elements.appStatusText.textContent = "水印已就绪，等待上传作品";
+            return;
+        }
+
+        if (processedCount) {
+            elements.appStatusText.textContent = `已生成 ${formatCountLabel(processedCount, "张成品")}，可以下载`;
+            return;
+        }
+
+        elements.appStatusText.textContent = `准备完成，可处理 ${formatCountLabel(state.photos.length, "张作品")}`;
+    }
+
+    function updateCounts() {
+        const processedCount = state.processedDownloads.filter(Boolean).length;
+        elements.photoCount.textContent = String(state.photos.length);
+        elements.processedCount.textContent = String(processedCount);
+        elements.photoUploadState.textContent = state.photos.length ? `${state.photos.length} 张` : "未选择";
+        elements.watermarkUploadState.textContent = state.watermark ? "已就绪" : "未选择";
+        elements.thumbnailSummary.textContent = state.photos.length ? `${state.photos.length} 张图片` : "暂无图片";
+    }
+
+    function syncUiMeta() {
+        updateCounts();
+        updatePreviewMeta();
+        updateStatusText();
+    }
+
+    function updateButtonState() {
+        elements.applyWatermarkBtn.disabled = !state.photos.length || !state.watermark || state.isProcessing;
+        elements.downloadAllBtn.disabled = !state.processedDownloads.some(Boolean) || state.isProcessing;
+    }
+
+    function setLoadingState(isVisible, message) {
+        elements.loading.style.display = isVisible ? "flex" : "none";
+
+        if (message && elements.loadingText) {
+            elements.loadingText.textContent = message;
+        }
+
+        updateStatusText();
+    }
+
+    function revokePhotoUrls(photo) {
+        if (photo && photo.originalUrl && photo.originalUrl.startsWith("blob:")) {
+            URL.revokeObjectURL(photo.originalUrl);
+        }
+    }
+
+    function revokeProcessedDownloads() {
+        state.processedDownloads.forEach(item => {
+            if (item && item.url) {
+                URL.revokeObjectURL(item.url);
+            }
+        });
+        state.processedDownloads = [];
+    }
+
+    function clearPhotos() {
+        state.photos.forEach(revokePhotoUrls);
+        state.photos = [];
+        state.currentIndex = 0;
+        elements.thumbnailContainer.innerHTML = "";
+        elements.previewImage.removeAttribute("src");
+        elements.previewImage.style.display = "none";
+        syncUiMeta();
+    }
+
+    function invalidateProcessedDownloads() {
+        revokeProcessedDownloads();
+        syncUiMeta();
         updateButtonState();
     }
-}
 
-// 下载所有处理后的图片（优化版本）
-function downloadAllProcessedImages() {
-    if (processedImages.length === 0) return;
-    
-    // 批量下载，避免同时创建过多DOM元素
-    const downloadBatch = (startIndex) => {
-        const batchSize = 5;
-        const endIndex = Math.min(startIndex + batchSize, processedImages.length);
-        
-        for (let i = startIndex; i < endIndex; i++) {
-            const link = document.createElement('a');
-            const originalName = uploadedPhotos[i].name;
-            const extension = originalName.substring(originalName.lastIndexOf('.'));
-            const fileName = originalName.substring(0, originalName.lastIndexOf('.')) + '_watermarked' + extension;
-            
-            link.href = processedImages[i];
-            link.download = fileName;
-            link.style.display = 'none';
-            
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+    function refreshActiveThumbnail() {
+        const thumbnails = elements.thumbnailContainer.querySelectorAll(".thumbnail");
+        thumbnails.forEach((thumbnail, index) => {
+            thumbnail.classList.toggle("active", index === state.currentIndex);
+        });
+    }
+
+    function createWatermarkedCanvas(baseImage) {
+        const canvas = createCanvas(
+            baseImage.naturalWidth || baseImage.width,
+            baseImage.naturalHeight || baseImage.height
+        );
+        const context = canvas.getContext("2d");
+        const settings = getSettings();
+
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        context.drawImage(baseImage, 0, 0, canvas.width, canvas.height);
+
+        if (!state.watermark) {
+            return canvas;
         }
-        
-        // 如果还有更多文件，延迟处理下一批
-        if (endIndex < processedImages.length) {
-            setTimeout(() => downloadBatch(endIndex), 100);
+
+        const watermarkAspectRatio = state.watermark.width / state.watermark.height;
+        const watermarkWidth = Math.max(1, canvas.width * settings.size);
+        const watermarkHeight = Math.max(1, watermarkWidth / watermarkAspectRatio);
+        const watermarkX = (canvas.width - watermarkWidth) / 2;
+        const watermarkY = Math.max(settings.margin, canvas.height - watermarkHeight - settings.margin);
+
+        const watermarkCanvas = prepareWatermarkCanvas(
+            context,
+            watermarkX,
+            watermarkY,
+            watermarkWidth,
+            watermarkHeight
+        );
+
+        context.globalAlpha = settings.opacity;
+        context.drawImage(watermarkCanvas, watermarkX, watermarkY, watermarkWidth, watermarkHeight);
+        context.globalAlpha = 1;
+
+        return canvas;
+    }
+
+    async function createPreviewSource(originalUrl, file) {
+        const image = await loadImage(originalUrl);
+        const originalWidth = image.naturalWidth || image.width;
+        const originalHeight = image.naturalHeight || image.height;
+        const targetSize = scaleDimensions(originalWidth, originalHeight, PREVIEW_MAX_DIMENSION);
+
+        const needsCompression =
+            file.size > PREVIEW_SIZE_THRESHOLD ||
+            targetSize.width !== originalWidth ||
+            targetSize.height !== originalHeight;
+
+        if (!needsCompression) {
+            return {
+                src: originalUrl,
+                width: originalWidth,
+                height: originalHeight,
+                originalWidth,
+                originalHeight,
+                isCompressed: false
+            };
         }
-    };
-    
-    downloadBatch(0);
-}
 
-// 更新透明度值显示
-function updateOpacityValue() {
-    opacityValue.textContent = opacityRange.value + '%';
-}
+        const canvas = createCanvas(targetSize.width, targetSize.height);
+        const context = canvas.getContext("2d");
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-// 更新大小值显示
-function updateSizeValue() {
-    sizeValue.textContent = sizeRange.value + '%';
-}
-
-// 更新边距值显示
-function updateMarginValue() {
-    marginValue.textContent = marginRange.value + 'px';
-}
-
-// 更新按钮状态
-function updateButtonState() {
-    applyWatermarkBtn.disabled = !(uploadedPhotos.length > 0 && watermarkImage) || isProcessing;
-    downloadAllBtn.disabled = processedImages.length === 0 || isProcessing;
-}
-
-// 显示处理进度
-function showProcessingProgress() {
-    processingProgress = 0;
-    
-    // 创建进度条（如果不存在）
-    let progressContainer = document.getElementById('progress-container');
-    if (!progressContainer) {
-        progressContainer = document.createElement('div');
-        progressContainer.id = 'progress-container';
-        progressContainer.innerHTML = `
-            <div class="progress-bar">
-                <div class="progress-fill" id="progress-fill"></div>
-                <span class="progress-text" id="progress-text">处理中... 0%</span>
-            </div>
-        `;
-        progressContainer.style.cssText = `
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 20px;
-            border-radius: 10px;
-            z-index: 1000;
-            min-width: 300px;
-            text-align: center;
-        `;
-        
-        const progressBar = progressContainer.querySelector('.progress-bar');
-        progressBar.style.cssText = `
-            width: 100%;
-            height: 20px;
-            background: #333;
-            border-radius: 10px;
-            overflow: hidden;
-            position: relative;
-            margin-bottom: 10px;
-        `;
-        
-        const progressFill = progressContainer.querySelector('.progress-fill');
-        progressFill.style.cssText = `
-            height: 100%;
-            background: linear-gradient(90deg, #4CAF50, #45a049);
-            width: 0%;
-            transition: width 0.3s ease;
-        `;
-        
-        const progressText = progressContainer.querySelector('.progress-text');
-        progressText.style.cssText = `
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            font-size: 12px;
-            font-weight: bold;
-        `;
-        
-        document.body.appendChild(progressContainer);
-    }
-    
-    progressContainer.style.display = 'block';
-}
-
-// 更新处理进度
-function updateProcessingProgress() {
-    const progressFill = document.getElementById('progress-fill');
-    const progressText = document.getElementById('progress-text');
-    
-    if (progressFill && progressText) {
-        progressFill.style.width = processingProgress + '%';
-        progressText.textContent = `处理中... ${Math.round(processingProgress)}%`;
-    }
-}
-
-// 隐藏处理进度
-function hideProcessingProgress() {
-    const progressContainer = document.getElementById('progress-container');
-    if (progressContainer) {
-        progressContainer.style.display = 'none';
-    }
-}
-
-// 清理内存函数
-function cleanupMemory() {
-    // 清理处理过的图片数据（保留最近的10张）
-    if (processedImages.length > 10) {
-        processedImages.splice(0, processedImages.length - 10);
-    }
-    
-    // 强制垃圾回收（如果浏览器支持）
-    if (window.gc) {
-        window.gc();
-    }
-}
-
-// 定期清理内存
-setInterval(cleanupMemory, 30000); // 每30秒清理一次
-
-// 分析图片区域颜色并决定水印颜色（只分析水印实际覆盖的像素）
-function analyzeImageBrightness(ctx, x, y, width, height) {
-    // 获取水印区域的像素数据
-    const imageData = ctx.getImageData(x, y, width, height);
-    const data = imageData.data;
-    
-    // 创建一个临时画布来获取水印的alpha通道信息
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = width;
-    tempCanvas.height = height;
-    const tempCtx = tempCanvas.getContext('2d');
-    
-    // 将水印绘制到临时画布上，缩放到目标大小
-    tempCtx.drawImage(watermarkImage, 0, 0, width, height);
-    const watermarkData = tempCtx.getImageData(0, 0, width, height);
-    const watermarkPixels = watermarkData.data;
-    
-    let totalR = 0, totalG = 0, totalB = 0;
-    let totalBrightness = 0;
-    let pixelCount = 0;
-    
-    // 只计算水印实际覆盖的像素（alpha > 0的像素）
-    for (let i = 0; i < data.length; i += 4) {
-        const watermarkAlpha = watermarkPixels[i + 3]; // 水印的alpha通道
-        
-        // 只有当水印在这个位置有像素时（alpha > 0），才计算背景颜色
-        if (watermarkAlpha > 0) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            
-            totalR += r;
-            totalG += g;
-            totalB += b;
-            
-            // 使用相对亮度公式: 0.299*R + 0.587*G + 0.114*B
-            const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-            totalBrightness += brightness;
-            pixelCount++;
-        }
-    }
-    
-    // 如果没有有效像素，回退到简单的黑白判断
-    if (pixelCount === 0) {
-        // 计算整个区域的平均亮度作为回退
-        let fallbackBrightness = 0;
-        for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1];
-            const b = data[i + 2];
-            fallbackBrightness += 0.299 * r + 0.587 * g + 0.114 * b;
-        }
-        fallbackBrightness /= (data.length / 4);
-        return fallbackBrightness > 128 ? '#000000' : '#FFFFFF';
-    }
-    
-    // 计算平均亮度
-    const averageBrightness = totalBrightness / pixelCount;
-    
-    // 使用简单而有效的黑白选择策略
-    // 如果背景较亮（亮度 > 128），使用黑色水印
-    // 如果背景较暗（亮度 <= 128），使用白色水印
-    // 这样可以确保良好的对比度和可读性
-    return averageBrightness > 128 ? '#000000' : '#FFFFFF';
-}
-
-// 计算两个亮度值之间的对比度比率
-function calculateContrastRatio(luminance1, luminance2) {
-    const lighter = Math.max(luminance1, luminance2);
-    const darker = Math.min(luminance1, luminance2);
-    return (lighter + 0.05) / (darker + 0.05);
-}
-
-// RGB转HSL颜色空间
-function rgbToHsl(r, g, b) {
-    r /= 255;
-    g /= 255;
-    b /= 255;
-    
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    let h, s, l = (max + min) / 2;
-    
-    if (max === min) {
-        h = s = 0; // 灰色
-    } else {
-        const d = max - min;
-        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-        
-        switch (max) {
-            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-            case g: h = (b - r) / d + 2; break;
-            case b: h = (r - g) / d + 4; break;
-        }
-        
-        h /= 6;
-    }
-    
-    return [h, s, l];
-}
-
-// HSL转RGB颜色空间
-function hslToRgb(h, s, l) {
-    let r, g, b;
-    
-    if (s === 0) {
-        r = g = b = l; // 灰色
-    } else {
-        const hue2rgb = (p, q, t) => {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1/6) return p + (q - p) * 6 * t;
-            if (t < 1/2) return q;
-            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-            return p;
+        return {
+            src: canvasToDataURL(canvas, "image/jpeg", PREVIEW_JPEG_QUALITY),
+            width: targetSize.width,
+            height: targetSize.height,
+            originalWidth,
+            originalHeight,
+            isCompressed: true
         };
-        
-        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-        const p = 2 * l - q;
-        
-        r = hue2rgb(p, q, h + 1/3);
-        g = hue2rgb(p, q, h);
-        b = hue2rgb(p, q, h - 1/3);
     }
-    
-    return [r * 255, g * 255, b * 255];
-}
 
-// 初始化应用
-function init() {
-    initDragAndDrop();
-    initEventListeners();
-    updateOpacityValue();
-    updateSizeValue();
-    updateMarginValue();
-}
+    async function renderCurrentPreview() {
+        const photo = state.photos[state.currentIndex];
 
-// 启动应用
-init();
+        if (!photo) {
+            elements.previewImage.removeAttribute("src");
+            elements.previewImage.style.display = "none";
+            updatePreviewMeta();
+            return;
+        }
+
+        const renderId = state.previewRenderId + 1;
+        state.previewRenderId = renderId;
+
+        if (!state.watermark) {
+            elements.previewImage.src = photo.previewUrl;
+            elements.previewImage.style.display = "block";
+            updatePreviewMeta();
+            return;
+        }
+
+        const baseImage = await loadImage(photo.previewUrl);
+        const previewCanvas = createWatermarkedCanvas(baseImage);
+
+        if (renderId !== state.previewRenderId) {
+            return;
+        }
+
+        elements.previewImage.src = previewCanvas.toDataURL("image/jpeg", PREVIEW_JPEG_QUALITY);
+        elements.previewImage.style.display = "block";
+        updatePreviewMeta();
+    }
+
+    function createThumbnail(photo, index) {
+        const thumbnail = document.createElement("button");
+        thumbnail.type = "button";
+        thumbnail.className = "thumbnail";
+        thumbnail.title = photo.name;
+        thumbnail.setAttribute("aria-label", `预览 ${photo.name}`);
+
+        const image = document.createElement("img");
+        image.src = photo.previewUrl;
+        image.alt = photo.name;
+
+        const label = document.createElement("span");
+        label.className = "thumbnail-label";
+        label.textContent = photo.name;
+
+        thumbnail.append(image, label);
+        thumbnail.addEventListener("click", () => {
+            state.currentIndex = index;
+            refreshActiveThumbnail();
+            syncUiMeta();
+            renderCurrentPreview().catch(console.error);
+        });
+
+        elements.thumbnailContainer.appendChild(thumbnail);
+    }
+
+    async function handlePhotoFiles(fileList) {
+        const imageFiles = Array.from(fileList).filter(file => file.type.startsWith("image/"));
+
+        if (!imageFiles.length) {
+            return;
+        }
+
+        state.previewRenderId += 1;
+        clearPhotos();
+        invalidateProcessedDownloads();
+        updateEmptyState();
+
+        for (const file of imageFiles) {
+            const originalUrl = URL.createObjectURL(file);
+
+            try {
+                const preview = await createPreviewSource(originalUrl, file);
+                const photo = {
+                    name: file.name,
+                    mimeType: file.type || "image/jpeg",
+                    originalUrl,
+                    previewUrl: preview.src,
+                    originalWidth: preview.originalWidth,
+                    originalHeight: preview.originalHeight,
+                    previewWidth: preview.width,
+                    previewHeight: preview.height,
+                    isPreviewCompressed: preview.isCompressed
+                };
+
+                state.photos.push(photo);
+                createThumbnail(photo, state.photos.length - 1);
+                syncUiMeta();
+                await nextFrame();
+            } catch (error) {
+                revokePhotoUrls({ originalUrl });
+                console.error(error);
+            }
+        }
+
+        state.currentIndex = 0;
+        refreshActiveThumbnail();
+        updateEmptyState();
+        syncUiMeta();
+        updateButtonState();
+        await renderCurrentPreview();
+    }
+
+    async function handleWatermarkFile(file) {
+        if (!file || file.type !== "image/png") {
+            alert("请上传 PNG 格式的水印图片。");
+            return;
+        }
+
+        invalidateProcessedDownloads();
+
+        try {
+            const dataUrl = await readFileAsDataURL(file);
+            const image = await loadImage(dataUrl);
+            const width = image.naturalWidth || image.width;
+            const height = image.naturalHeight || image.height;
+
+            state.watermark = {
+                file,
+                dataUrl,
+                image,
+                width,
+                height
+            };
+
+            elements.watermarkPreview.src = dataUrl;
+            elements.watermarkPreview.style.display = "block";
+            elements.watermarkPreviewContainer.style.display = "block";
+            elements.watermarkInfo.textContent = `${file.name} · ${width} × ${height}px`;
+
+            syncUiMeta();
+            updateButtonState();
+
+            if (state.photos.length) {
+                await renderCurrentPreview();
+            }
+        } catch (error) {
+            console.error(error);
+        }
+    }
+
+    async function createProcessedDownload(photo) {
+        const baseImage = await loadImage(photo.originalUrl);
+        const canvas = createWatermarkedCanvas(baseImage);
+        const outputType = getOutputType(photo);
+        const quality = outputType === "image/png" ? undefined : OUTPUT_JPEG_QUALITY;
+        const blob = await canvasToBlob(canvas, outputType, quality);
+        const url = URL.createObjectURL(blob);
+
+        return {
+            url,
+            type: blob.type || outputType,
+            name: buildDownloadName(photo.name, outputType),
+            width: canvas.width,
+            height: canvas.height
+        };
+    }
+
+    async function applyWatermarkToAllPhotos() {
+        if (!state.photos.length || !state.watermark || state.isProcessing) {
+            return;
+        }
+
+        state.isProcessing = true;
+        revokeProcessedDownloads();
+        state.processedDownloads = new Array(state.photos.length);
+        updateButtonState();
+        setLoadingState(true, "正在处理图片...");
+
+        try {
+            for (let startIndex = 0; startIndex < state.photos.length; startIndex += PROCESS_BATCH_SIZE) {
+                const batch = state.photos.slice(startIndex, startIndex + PROCESS_BATCH_SIZE);
+
+                for (let offset = 0; offset < batch.length; offset += 1) {
+                    const photoIndex = startIndex + offset;
+                    const photo = batch[offset];
+                    const progressText = `正在处理图片 ${photoIndex + 1} / ${state.photos.length}`;
+                    elements.loadingText.textContent = progressText;
+                    updateStatusText();
+                    state.processedDownloads[photoIndex] = await createProcessedDownload(photo);
+                    syncUiMeta();
+                }
+
+                await nextFrame();
+            }
+        } catch (error) {
+            console.error(error);
+        } finally {
+            state.isProcessing = false;
+            setLoadingState(false, "正在处理图片...");
+            syncUiMeta();
+            updateButtonState();
+            await renderCurrentPreview();
+        }
+    }
+
+    function downloadAllProcessedImages() {
+        const downloads = state.processedDownloads.filter(Boolean);
+
+        if (!downloads.length) {
+            return;
+        }
+
+        downloads.forEach((item, index) => {
+            window.setTimeout(() => {
+                const link = document.createElement("a");
+                link.href = item.url;
+                link.download = item.name;
+                link.style.display = "none";
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }, index * 120);
+        });
+    }
+
+    function handleSettingsChanged() {
+        invalidateProcessedDownloads();
+        syncUiMeta();
+
+        if (state.photos.length) {
+            renderCurrentPreview().catch(console.error);
+        }
+    }
+
+    function initDragAndDrop(target, onFilesDropped, allowMultiple) {
+        target.addEventListener("dragover", event => {
+            event.preventDefault();
+            target.classList.add("highlight");
+        });
+
+        target.addEventListener("dragleave", () => {
+            target.classList.remove("highlight");
+        });
+
+        target.addEventListener("drop", event => {
+            event.preventDefault();
+            target.classList.remove("highlight");
+
+            if (!event.dataTransfer || !event.dataTransfer.files.length) {
+                return;
+            }
+
+            if (allowMultiple) {
+                onFilesDropped(event.dataTransfer.files);
+            } else {
+                onFilesDropped(event.dataTransfer.files[0]);
+            }
+        });
+    }
+
+    function bindUploadShortcut(target, input) {
+        target.addEventListener("click", () => input.click());
+        target.addEventListener("keydown", event => {
+            if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                input.click();
+            }
+        });
+    }
+
+    function bindEvents() {
+        bindUploadShortcut(elements.photoUpload, elements.photoInput);
+        elements.photoInput.addEventListener("change", async event => {
+            if (event.target.files.length) {
+                await handlePhotoFiles(event.target.files);
+                event.target.value = "";
+            }
+        });
+
+        bindUploadShortcut(elements.watermarkUpload, elements.watermarkInput);
+        elements.watermarkInput.addEventListener("change", async event => {
+            if (event.target.files.length) {
+                await handleWatermarkFile(event.target.files[0]);
+                event.target.value = "";
+            }
+        });
+
+        elements.applyWatermarkBtn.addEventListener("click", () => {
+            applyWatermarkToAllPhotos().catch(console.error);
+        });
+        elements.downloadAllBtn.addEventListener("click", downloadAllProcessedImages);
+
+        elements.opacityRange.addEventListener("input", () => {
+            updateSliderLabels();
+            handleSettingsChanged();
+        });
+        elements.sizeRange.addEventListener("input", () => {
+            updateSliderLabels();
+            handleSettingsChanged();
+        });
+        elements.marginRange.addEventListener("input", () => {
+            updateSliderLabels();
+            handleSettingsChanged();
+        });
+
+        elements.watermarkModeInputs.forEach(input => {
+            input.addEventListener("change", () => {
+                syncColorModeControls();
+                handleSettingsChanged();
+            });
+        });
+
+        elements.removeLightBackgroundSwitch.addEventListener("change", handleSettingsChanged);
+
+        elements.watermarkColor.addEventListener("change", () => {
+            updateActiveColorButton();
+            handleSettingsChanged();
+        });
+
+        elements.colorButtons.forEach(button => {
+            button.addEventListener("click", () => {
+                elements.watermarkColor.value = button.dataset.color;
+                updateActiveColorButton();
+                handleSettingsChanged();
+            });
+        });
+
+        initDragAndDrop(elements.photoUpload, files => {
+            handlePhotoFiles(files).catch(console.error);
+        }, true);
+
+        initDragAndDrop(elements.watermarkUpload, file => {
+            handleWatermarkFile(file).catch(console.error);
+        }, false);
+
+        window.addEventListener("beforeunload", () => {
+            state.photos.forEach(revokePhotoUrls);
+            revokeProcessedDownloads();
+        });
+    }
+
+    function init() {
+        updateSliderLabels();
+        syncColorModeControls();
+        updateActiveColorButton();
+        updateEmptyState();
+        syncUiMeta();
+        setLoadingState(false, "正在处理图片...");
+        bindEvents();
+        updateButtonState();
+
+        window.watermarkApp = {
+            state,
+            handlePhotoFiles,
+            handleWatermarkFile,
+            applyWatermarkToAllPhotos,
+            downloadAllProcessedImages,
+            renderCurrentPreview,
+            getSettings
+        };
+    }
+
+    if (document.readyState === "loading") {
+        window.addEventListener("DOMContentLoaded", init, { once: true });
+    } else {
+        init();
+    }
+})();
